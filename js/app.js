@@ -21,12 +21,13 @@
     shutter: $('#shutterBtn'), gallery: $('#galleryBtn'), reset: $('#resetBtn'), file: $('#fileInput'),
     resultImg: $('#resultImg'), status: $('#uploadStatus'), del: $('#deleteBtn'), retry: $('#retryBtn'),
     mineGrid: $('#mineGrid'), mineCount: $('#mineCount'), guest: $('#guestName'), toast: $('#toast'),
-    start: $('#startBtn'),
+    start: $('#startBtn'), pickBtn: $('#pickBtn'), pick: $('#pickPreview'),
   };
 
   const S = {
-    frame: null, layout: 1, filter: Filters.list[0], facing: 'user',
+    frame: null, layout: 1, filter: Filters.list[0], facing: 'user', deviceId: null,
     stream: null, shots: [], busy: false, cancel: false,
+    mode: 'camera', // 'camera' = live viewfinder, 'picked' = previewing photos from the gallery
     result: null, // { blob, url, canvas, id, token, status }
   };
 
@@ -59,8 +60,12 @@
     document.querySelectorAll('.screen').forEach((s) => s.classList.toggle('active', s.id === id));
     window.scrollTo(0, 0);
     if (id === 'camera') {
-      startCamera();
-      requestAnimationFrame(fitViewfinder);
+      if (S.mode === 'picked') {
+        requestAnimationFrame(renderPick);
+      } else {
+        startCamera();
+        requestAnimationFrame(fitViewfinder);
+      }
     } else {
       S.cancel = true;
       stopCamera();
@@ -154,18 +159,26 @@
     if (S.busy || f === S.frame) return;
     S.frame = f;
     store.set('frame', f.id);
-    discardShots();
     markSelected();
-    fitViewfinder();
+    if (S.mode === 'picked') {
+      renderPick();
+    } else {
+      discardShots();
+      fitViewfinder();
+    }
   }
 
   function setLayout(n) {
     if (S.busy || n === S.layout) return;
     S.layout = n;
     store.set('layout', n);
-    discardShots();
     renderFrameOptions();
-    fitViewfinder();
+    if (S.mode === 'picked') {
+      renderPick();
+    } else {
+      discardShots();
+      fitViewfinder();
+    }
   }
 
   function setFilter(f) {
@@ -173,13 +186,61 @@
     store.set('filter', f.id);
     els.video.style.filter = Filters.css(f);
     markSelected();
+    renderPick();
   }
 
   function updateProgress() {
     const n = S.layout, k = S.shots.length;
+    const label = S.mode === 'picked' ? `${Math.min(k, n)}/${n}` : `${Math.min(k + 1, n)}/${n}`;
     els.progress.innerHTML = n === 1 ? '' :
       Array.from({ length: n }, (_, i) => `<i class="${i < k ? 'on' : ''}"></i>`).join('') +
-      `<span>${Math.min(k + 1, n)}/${n}</span>`;
+      `<span>${label}</span>`;
+  }
+
+  // ---------- gallery photos ----------
+  function setMode(mode) {
+    S.mode = mode;
+    const picked = mode === 'picked';
+    els.vf.hidden = picked;
+    els.pick.hidden = !picked;
+    els.shutter.classList.toggle('send', picked);
+    els.shutter.setAttribute('aria-label', picked ? 'Hantar gambar' : 'Ambil gambar');
+    $('#flipBtn').style.visibility = picked ? 'hidden' : '';
+    if (current === 'camera') {
+      if (picked) {
+        S.cancel = true;
+        stopCamera();
+        requestAnimationFrame(renderPick);
+      } else {
+        startCamera();
+        requestAnimationFrame(fitViewfinder);
+      }
+    }
+    updateProgress();
+  }
+
+  // Live preview of the finished photo, so guests can try frames/filters before sending
+  function renderPick() {
+    if (S.mode !== 'picked' || current !== 'camera' || !S.frame) return;
+    const src = Frames.compose({ frame: S.frame, layout: S.layout, filter: S.filter, shots: S.shots, scale: 0.5 });
+    const c = els.pick;
+    c.width = src.width;
+    c.height = src.height;
+    c.getContext('2d').drawImage(src, 0, 0);
+    const r = els.stage.getBoundingClientRect();
+    const pad = 16, aspect = Frames.W / Frames.H;
+    let w = r.width - pad * 2, h = w / aspect;
+    if (h > r.height - pad * 2) { h = r.height - pad * 2; w = h * aspect; }
+    c.style.width = Math.max(0, w) + 'px';
+    c.style.height = Math.max(0, h) + 'px';
+    updateProgress();
+  }
+
+  let pickFrom = 'camera';
+  function openPicker(from) {
+    pickFrom = from;
+    els.file.multiple = true;
+    els.file.click();
   }
 
   // The viewfinder takes the exact shape of one photo slot, so guests see what they'll get
@@ -201,8 +262,59 @@
     els.camError.querySelector('p').textContent = msg + ' Anda masih boleh pilih gambar dari galeri.';
   }
 
-  async function startCamera() {
+  const SIZE = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  const BACK_RE = /back|rear|environment|belakang|後|背/i;
+  const FRONT_RE = /front|user|face|depan|前/i;
+
+  async function videoInputs() {
+    try {
+      return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    } catch {
+      return [];
+    }
+  }
+
+  // Phones often ignore a plain facingMode hint, so insist on it first, then fall
+  // back to choosing the camera by its label, and finally to any camera at all.
+  async function openStream(facing, avoidId) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: false, video: { ...SIZE, facingMode: { exact: facing } } });
+    } catch (e) {
+      if (e.name === 'NotAllowedError') throw e;
+    }
+    const cams = await videoInputs();
+    const re = facing === 'environment' ? BACK_RE : FRONT_RE;
+    const pick = cams.find((c) => re.test(c.label)) || cams.find((c) => c.deviceId && c.deviceId !== avoidId);
+    if (pick && pick.deviceId) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: false, video: { ...SIZE, deviceId: { exact: pick.deviceId } } });
+      } catch (e) {
+        if (e.name === 'NotAllowedError') throw e;
+      }
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: false, video: { ...SIZE, facingMode: facing } });
+  }
+
+  // Which way the opened camera really faces (may differ from what we asked for)
+  function actualFacing(stream, wanted) {
+    const track = stream.getVideoTracks()[0];
+    const settings = (track && track.getSettings && track.getSettings()) || {};
+    if (settings.facingMode === 'user' || settings.facingMode === 'environment') return settings.facingMode;
+    const label = (track && track.label) || '';
+    if (BACK_RE.test(label)) return 'environment';
+    if (FRONT_RE.test(label)) return 'user';
+    return wanted;
+  }
+
+  async function updateFlipButton() {
+    const cams = await videoInputs();
+    // labels/count are only reliable after permission; hide only when we're sure there's one camera
+    $('#flipBtn').hidden = cams.length === 1 && !!cams[0].label;
+  }
+
+  async function startCamera(flipping = false) {
     const req = ++camRequest;
+    const prevId = flipping ? S.deviceId : null;
     stopCamera();
     els.camError.hidden = true;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -210,19 +322,24 @@
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: S.facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
-      });
+      // some phones can't open a second camera until the first is fully released
+      if (flipping) await sleep(150);
+      const stream = await openStream(S.facing, prevId);
       if (req !== camRequest || current !== 'camera') {
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
+      const track = stream.getVideoTracks()[0];
+      S.deviceId = track && track.getSettings ? track.getSettings().deviceId : null;
+      const facing = actualFacing(stream, S.facing);
+      if (flipping && S.deviceId && S.deviceId === prevId) toast('Kamera lain tidak dijumpai');
+      S.facing = facing;
       S.stream = stream;
       els.video.muted = true;
       els.video.srcObject = stream;
-      els.video.classList.toggle('mirror', S.facing === 'user');
+      els.video.classList.toggle('mirror', facing === 'user');
       await els.video.play().catch(() => {});
+      updateFlipButton();
     } catch (e) {
       if (req !== camRequest) return;
       console.error(e);
@@ -288,6 +405,15 @@
   }
 
   async function shoot() {
+    if (S.mode === 'picked') {
+      if (S.shots.length < S.layout) {
+        toast(`Pilih ${S.layout - S.shots.length} gambar lagi`);
+        openPicker('camera');
+        return;
+      }
+      finish();
+      return;
+    }
     if (S.busy) { // tapping again while counting down cancels
       S.cancel = true;
       return;
@@ -334,20 +460,32 @@
   }
 
   async function onFilesPicked() {
-    const files = [...els.file.files];
+    const files = [...els.file.files].slice(0, 4);
     els.file.value = '';
+    const loaded = [];
     for (const f of files) {
-      if (S.shots.length >= S.layout) break;
       try {
-        S.shots.push(await loadImageFile(f));
+        loaded.push(await loadImageFile(f));
       } catch (e) {
         console.error(e);
         toast('Tak dapat buka gambar itu');
       }
     }
-    updateProgress();
-    if (S.shots.length >= S.layout) finish();
-    else if (S.shots.length) toast(`${S.layout - S.shots.length} gambar lagi`);
+    if (!loaded.length) return;
+
+    if (pickFrom === 'home') {
+      // pick a layout that fits how many photos they chose
+      S.shots = loaded;
+      S.layout = loaded.length === 1 ? 1 : loaded.length === 2 ? 2 : 4;
+      store.set('layout', S.layout);
+      renderFrameOptions();
+      setMode('picked');
+      show('camera');
+    } else {
+      S.shots = [...S.shots, ...loaded].slice(0, 4);
+      setMode('picked');
+    }
+    if (S.shots.length < S.layout) toast(`Pilih ${S.layout - S.shots.length} gambar lagi, atau tukar susunan`);
   }
 
   // ---------- result + upload ----------
@@ -362,6 +500,7 @@
     S.result = r;
     els.resultImg.src = r.url;
     show('result');
+    setMode('camera');
     upload(r);
   }
 
@@ -549,13 +688,20 @@
   function wire() {
     els.guest.addEventListener('change', () => store.set('guest', els.guest.value.trim()));
 
-    els.start.onclick = () => {
+    const begin = () => {
       store.set('guest', els.guest.value.trim());
       if (store.get('music', CFG.music !== false) && !Music.playing) {
         Music.play();
         syncMusicButtons();
       }
+    };
+    els.start.onclick = () => {
+      begin();
       show('camera');
+    };
+    els.pickBtn.onclick = () => {
+      begin();
+      openPicker('home');
     };
 
     document.querySelectorAll('.music-toggle').forEach((b) => {
@@ -567,14 +713,18 @@
 
     $('#mineBtn').onclick = () => show('mine');
     $('#mineBack').onclick = () => show('home');
-    $('#camBack').onclick = () => { S.shots = []; updateProgress(); show('home'); };
+    $('#camBack').onclick = () => {
+      S.shots = [];
+      show('home');
+      setMode('camera');
+    };
     $('#resBack').onclick = () => show('home');
     $('#againBtn').onclick = () => show('camera');
 
     $('#flipBtn').onclick = () => {
       if (S.busy) return;
       S.facing = S.facing === 'user' ? 'environment' : 'user';
-      startCamera();
+      startCamera(true);
     };
 
     document.querySelectorAll('.tab').forEach((t) => {
@@ -588,12 +738,10 @@
     els.reset.onclick = () => {
       if (S.busy) S.cancel = true;
       S.shots = [];
-      updateProgress();
+      if (S.mode === 'picked') setMode('camera');
+      else updateProgress();
     };
-    els.gallery.onclick = () => {
-      els.file.multiple = S.layout - S.shots.length > 1;
-      els.file.click();
-    };
+    els.gallery.onclick = () => openPicker('camera');
     els.file.onchange = onFilesPicked;
 
     $('#saveBtn').onclick = savePhoto;
@@ -607,7 +755,7 @@
       toast(ok ? 'Gambar dipadam' : 'Gagal memadam. Cuba lagi.');
     };
 
-    window.addEventListener('resize', fitViewfinder);
+    window.addEventListener('resize', () => (S.mode === 'picked' ? renderPick() : fitViewfinder()));
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
@@ -618,7 +766,7 @@
         }
       } else {
         Music.resume();
-        if (current === 'camera') startCamera();
+        if (current === 'camera' && S.mode === 'camera') startCamera();
       }
     });
 
@@ -648,6 +796,7 @@
     renderFrameOptions();
     updateProgress();
     els.start.disabled = false;
+    els.pickBtn.disabled = false;
 
     fontsReady.then(renderFrameOptions); // redraw thumbnails once script fonts arrive
   }

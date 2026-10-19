@@ -37,7 +37,10 @@
         <input id="guestName" maxlength="40" autocomplete="name" placeholder="cth. Mak Long Kiah">
       </label>
       <button id="startBtn" class="btn primary" disabled>Mula Ambil Gambar</button>
-      <button id="mineBtn" class="btn link">Gambar saya (<span id="mineCount">0</span>)</button>
+      <button id="pickBtn" class="btn" disabled>
+        <svg><use href="#i-gallery"/></svg> Gambar saya
+      </button>
+      <button id="mineBtn" class="btn link">Gambar yang dihantar (<span id="mineCount">0</span>)</button>
     </div>
     <p class="hashtag" data-text="hashtag"></p>
   </section>
@@ -60,6 +63,7 @@
         <div id="flash" class="flash"></div>
         <div id="camError" class="cam-error" hidden><p></p></div>
       </div>
+      <canvas id="pickPreview" class="pick-preview" hidden></canvas>
     </div>
 
     <div id="panel" class="panel">
@@ -103,7 +107,7 @@
   <section id="mine" class="screen">
     <header class="topbar">
       <button id="mineBack" class="icon-btn" aria-label="Kembali"><svg><use href="#i-back"/></svg></button>
-      <h2>Gambar saya</h2>
+      <h2>Gambar dihantar</h2>
       <button class="icon-btn music-toggle" aria-label="Muzik"><svg><use href="#i-music"/></svg><span class="slash"></span></button>
     </header>
     <p class="hint">Gambar yang dihantar dari telefon ini sahaja. Anda boleh padam gambar anda sendiri.</p>

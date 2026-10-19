@@ -101,6 +101,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .field span { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
 .field input { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font: inherit; font-size: 16px; background: #fff; color: var(--ink); }
 .field input:focus { outline: 2px solid var(--gold-2); outline-offset: 1px; }
+.card .btn:not(.link) + .btn:not(.link) { margin-top: 10px; }
 .hashtag { margin-top: 18px; font-size: .8rem; color: var(--muted); letter-spacing: .04em; }
 
 /* ---------- camera ---------- */
@@ -130,6 +131,12 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 .flash.go { animation: flash .45s ease-out; }
 @keyframes flash { from { opacity: .9; } to { opacity: 0; } }
+.pick-preview { display: block; border-radius: 3px; box-shadow: 0 18px 40px -18px rgba(0, 0, 0, .8); }
+.shutter.send { border-color: var(--gold-2); }
+.shutter.send::after {
+  content: "✓"; display: grid; place-items: center;
+  background: var(--gold-2); color: var(--dark); font-size: 30px; font-weight: 600;
+}
 .cam-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; font-size: .9rem; line-height: 1.6; color: #ddd; background: #1a1716; }
 
 .panel { background: var(--dark-2); padding: 12px 0 calc(16px + env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; }
